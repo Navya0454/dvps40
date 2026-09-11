@@ -2,14 +2,31 @@ from log_analyzer import analyze_log
 from ai_engine import diagnose_with_groq, generate_fix
 from fix_applier import apply_fix
 from git_autofix import commit_and_push
+from github_pr import create_pull_request
 
 import re
+import subprocess
+from datetime import datetime
+
+
+def create_new_branch():
+    branch_name = "dvps40-auto-fix-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    result = subprocess.run(
+        ["git", "checkout", "-b", branch_name],
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr)
+
+    return branch_name
 
 
 def main():
-
     print("=" * 60)
-    print("        DVPS40 - AUTONOMOUS AUTO-FIXING DEVOPS BOT")
+    print("DVPS40 - AUTONOMOUS AUTO-FIXING DEVOPS BOT")
     print("=" * 60)
 
     print("\nPaste your deployment/server error below.")
@@ -28,202 +45,95 @@ def main():
     log = "\n".join(lines)
 
     if not log.strip():
-        print("\nNo log provided.")
         return
 
-    # --------------------------------------------------
-    # STEP 1 - LOCAL ERROR ANALYSIS
-    # --------------------------------------------------
+    print("\n[1/6] Analyzing error...")
 
-    print("\n[1/5] Analyzing error...")
+    result = analyze_log(log)
 
-    try:
+    print("\n[2/6] Asking Groq AI to diagnose the problem...")
 
-        result = analyze_log(log)
+    groq_result = diagnose_with_groq(log)
 
-        print("\n--- ERROR ANALYSIS ---")
-        print("Error Type  :", result["error_type"])
-        print("Message     :", result["message"])
-        print("Likely Cause:", result["likely_cause"])
-        print("Severity    :", result["severity"])
+    print("\n[3/6] Generating AI fix...")
 
-    except Exception as e:
+    fix_result = generate_fix(log, groq_result)
 
-        print("\nLocal log analysis failed.")
-        print("Error:", e)
-        return
-
-    # --------------------------------------------------
-    # STEP 2 - GROQ AI DIAGNOSIS
-    # --------------------------------------------------
-
-    print("\n[2/5] Asking Groq AI to diagnose the problem...")
-
-    try:
-
-        groq_result = diagnose_with_groq(log)
-
-        print("\n--- GROQ AI DIAGNOSIS ---")
-        print(groq_result)
-
-    except Exception as e:
-
-        print("\nGroq AI diagnosis failed.")
-        print("Error:", e)
-        return
-
-    # --------------------------------------------------
-    # STEP 3 - AI FIX GENERATION
-    # --------------------------------------------------
-
-    print("\n[3/5] Generating AI fix...")
-
-    try:
-
-        fix_result = generate_fix(log, groq_result)
-
-        print("\n--- AI FIX GENERATED ---")
-        print(fix_result)
-
-    except Exception as e:
-
-        print("\nAI fix generation failed.")
-        print("Error:", e)
-        return
-
-    # --------------------------------------------------
-    # STEP 4 - APPLY AI FIX
-    # --------------------------------------------------
-
-    print("\n[4/5] Applying AI fix...")
+    print("\n[4/6] Applying AI fix...")
 
     fix_applied = False
 
-    try:
+    if "ModuleNotFoundError" in log:
+        match = re.search(
+            r"No module named ['\"]([^'\"]+)['\"]",
+            log
+        )
 
-        # Detect missing Python package
-        #
-        # Example:
-        # ModuleNotFoundError: No module named 'requests'
+        if match:
+            package_name = match.group(1)
 
-        if "ModuleNotFoundError" in log:
-
-            match = re.search(
-                r"No module named ['\"]([^'\"]+)['\"]",
-                log
+            changed = apply_fix(
+                "INSTALL_PACKAGE",
+                package_name
             )
 
-            if match:
-
-                package_name = match.group(1)
-
-                print(
-                    f"\nDetected missing package: {package_name}"
-                )
-
-                changed = apply_fix(
-                    "INSTALL_PACKAGE",
-                    package_name
-                )
-
-                if changed:
-
-                    fix_applied = True
-
-                    print(
-                        f"\nSuccessfully added "
-                        f"'{package_name}' to requirements.txt"
-                    )
-
-                else:
-
-                    print(
-                        "\nPackage already exists."
-                    )
-
-            else:
-
-                print(
-                    "\nCould not identify the missing package."
-                )
-
-        else:
-
-            print(
-                "\nNo supported automatic fix detected."
-            )
-
-    except Exception as e:
-
-        print("\nAI fix application failed.")
-        print("Error:", e)
-        return
-
-    # --------------------------------------------------
-    # STEP 5 - GITHUB COMMIT & PUSH
-    # --------------------------------------------------
-
-    print("\n[5/5] Committing and pushing AI fix to GitHub...")
+            if changed:
+                fix_applied = True
 
     if not fix_applied:
-
-        print("\nNo new fix was applied.")
-        print("Skipping GitHub commit.")
-
-        print("\n----------------------------------------------")
-        print("DVPS40 AUTO-FIX PROCESS")
-        print("----------------------------------------------")
-
-        print("✓ Error analyzed")
-        print("✓ Groq AI diagnosis completed")
-        print("✓ AI fix generated")
-        print("✓ Fix analysis completed")
-        print("→ No new file changes to commit")
-
+        print("\nNo automatic fix was applied.")
         return
 
-    try:
+    print("\n[5/6] Committing and pushing AI fix to GitHub...")
 
-        branch_name = "dvps40-auto-fix"
+    branch_name = create_new_branch()
 
-        commit_message = (
-            "DVPS40: Apply AI-generated auto-fix"
-        )
+    commit_and_push(
+        branch_name,
+        "DVPS40: Apply AI-generated auto-fix"
+    )
 
-        commit_and_push(
-            branch_name,
-            commit_message
-        )
+    print("\n[6/6] Creating automatic Pull Request...")
 
-        print("\n✓ Git commit created")
-        print("✓ AI fix pushed to GitHub")
-        print(f"✓ Branch: {branch_name}")
+    pr_title = "DVPS40: Automated AI Auto-Fix"
 
-    except Exception as e:
+    pr_body = (
+        "## DVPS40 Automated AI Auto-Fix\n\n"
+        "### Detected Error\n\n"
+        "```text\n"
+        + log +
+        "\n```\n\n"
+        "### AI Diagnosis\n\n"
+        + groq_result +
+        "\n\n"
+        "### AI Generated Fix\n\n"
+        + fix_result +
+        "\n\n"
+        "### Automated Actions\n\n"
+        "- Error analyzed\n"
+        "- Groq AI diagnosis completed\n"
+        "- AI fix generated\n"
+        "- Fix applied\n"
+        "- Git commit created\n"
+        "- Changes pushed to GitHub\n"
+        "- Pull Request created automatically\n\n"
+        "### Branch\n\n"
+        "`"
+        + branch_name +
+        "`\n"
+    )
 
-        print("\nGitHub auto-fix failed.")
-        print("Error:", e)
-        return
+    pr_url = create_pull_request(
+        branch_name,
+        pr_title,
+        pr_body
+    )
 
-    # --------------------------------------------------
-    # FINAL STATUS
-    # --------------------------------------------------
-
-    print("\n----------------------------------------------")
-    print("DVPS40 AUTO-FIX PROCESS")
-    print("----------------------------------------------")
-
-    print("✓ Error analyzed")
-    print("✓ Groq AI diagnosis completed")
-    print("✓ AI fix generated")
-    print("✓ AI fix applied")
-    print("✓ Git commit created")
-    print("✓ Fix pushed to GitHub")
-
-    print("\n→ Automatic Pull Request coming next")
-    print("→ Fix verification coming next")
-
-    print("\nDVPS40 Step 4.3 completed successfully.")
+    print("\n========================================")
+    print("LIVE PULL REQUEST CREATED")
+    print("========================================")
+    print(pr_url)
+    print("========================================")
 
 
 if __name__ == "__main__":
