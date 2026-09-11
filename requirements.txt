@@ -1,0 +1,14 @@
+requests
+flask
+fastapi
+
+Add-Content requirements.txt "python-telegram-bot"
+
+
+beautifulsoup4
+
+httpx
+
+uvicorn
+
+pandas
