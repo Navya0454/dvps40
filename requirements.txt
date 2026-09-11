@@ -1,2 +1,7 @@
 requests
 flask
+fastapi
+
+rich
+
+pandas
